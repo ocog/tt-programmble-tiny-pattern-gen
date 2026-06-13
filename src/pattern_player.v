@@ -5,13 +5,13 @@
 // from RAM_DEPTH-1 back to 0. `advance` pulses high for one cycle on
 // each step.
 //
-// NOTE: RAM_DEPTH defaults to 64 (not 256) to match the FF-based RAM
-// in ram_256x8.v, which was reduced from 256 to 64 entries to fit a
+// NOTE: RAM_DEPTH defaults to 16 (not 256) to match the FF-based RAM
+// in ram_256x8.v, which was reduced from 256 to 16 entries to fit a
 // 1x1 Tiny Tapeout tile.
 module pattern_player #(
     parameter CLK_FREQ     = 10_000_000,
     parameter PLAY_RATE_HZ = 1000,
-    parameter RAM_DEPTH    = 64
+    parameter RAM_DEPTH    = 16
 )(
     input  wire       clk,
     input  wire       rst_n,

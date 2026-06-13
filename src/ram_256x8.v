@@ -5,9 +5,9 @@
 // is registered (one cycle of latency).
 //
 // NOTE: the address ports are 8 bits wide per the project interface,
-// but only the low 6 bits are decoded, giving 64 x 8 bits of storage.
+// but only the low 4 bits are decoded, giving 16 x 8 bits of storage.
 // A full 256 x 8 FF array (2048 flip-flops + 256:1 muxes) does not fit
-// in a 1x1 Tiny Tapeout tile, so the storage depth was reduced to 64
+// in a 1x1 Tiny Tapeout tile, so the storage depth was reduced to 16
 // while keeping the module/port names unchanged.
 module ram_256x8 (
     input  wire       clk,
@@ -18,15 +18,15 @@ module ram_256x8 (
     output reg  [7:0] rdata
 );
 
-    localparam DEPTH = 64;
+    localparam DEPTH = 16;
 
     reg [7:0] mem [0:DEPTH-1];
 
     always @(posedge clk) begin
         if (we) begin
-            mem[waddr[5:0]] <= wdata;
+            mem[waddr[3:0]] <= wdata;
         end
-        rdata <= mem[raddr[5:0]];
+        rdata <= mem[raddr[3:0]];
     end
 
 endmodule
