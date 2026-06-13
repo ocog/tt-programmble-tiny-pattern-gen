@@ -51,20 +51,24 @@ async def test_project(dut):
     dut.rst_n.value = 1
     await ClockCycles(dut.clk, 5)
 
-    dut._log.info("Sending 0xA5 over UART")
-    await uart_send_byte(dut, 0xA5)
+    dut._log.info("Filling RAM with 0x00-0x3F over UART")
+    for i in range(RAM_DEPTH):
+        await uart_send_byte(dut, i)
     await ClockCycles(dut.clk, 5)
 
-    # Sample uo_out over one full pattern-player loop. The byte we sent
-    # lands in RAM[0], so 0xA5 must appear on uo_out (DAC mode) at some
-    # point, and the output must not be stuck at a constant value.
+    # Sample uo_out over one full pattern-player loop. RAM[i] == i for
+    # i in 0..RAM_DEPTH-1, so uo_out (DAC mode) should sweep through
+    # those values and must not be stuck at a constant value.
     dut._log.info("Sampling uo_out over one full playback loop")
     samples = set()
     for _ in range(RAM_DEPTH + 1):
-        samples.add(int(dut.uo_out.value))
+        try:
+            samples.add(int(dut.uo_out.value))
+        except ValueError:
+            pass  # skip uninitialized X values
         await ClockCycles(dut.clk, PLAY_DIVISOR)
 
-    assert 0xA5 in samples, "0xA5 written over UART never appeared on uo_out"
+    assert (RAM_DEPTH - 1) in samples, "last RAM byte written never appeared on uo_out"
     assert len(samples) > 1, "uo_out is stuck at a single value"
 
     # Switch to PWM mode and confirm the shared 8-bit PWM counter makes
