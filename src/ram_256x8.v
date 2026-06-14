@@ -5,8 +5,8 @@
 // is registered (one cycle of latency).
 //
 // NOTE: the address ports are 8 bits wide per the project interface,
-// but only the low 5 bits are decoded, giving 32 x 8 bits of storage
-// (256 flip-flops plus 32:1 read/write muxes).
+// but only the low 6 bits are decoded, giving 64 x 8 bits of storage
+// (512 flip-flops plus 64:1 read/write muxes).
 module ram_256x8 (
     input  wire       clk,
     input  wire       we,
@@ -16,15 +16,15 @@ module ram_256x8 (
     output reg  [7:0] rdata
 );
 
-    localparam DEPTH = 32;
+    localparam DEPTH = 64;
 
     reg [7:0] mem [0:DEPTH-1];
 
     always @(posedge clk) begin
         if (we) begin
-            mem[waddr[4:0]] <= wdata;
+            mem[waddr[5:0]] <= wdata;
         end
-        rdata <= mem[raddr[4:0]];
+        rdata <= mem[raddr[5:0]];
     end
 
 endmodule
