@@ -4,9 +4,9 @@
 // macros). Write on the rising edge when `we` is high; the read output
 // is registered (one cycle of latency).
 //
-// NOTE: full 256 x 8 storage, using all 8 address bits. This is a
-// 2048 flip-flop FF array (plus 256:1 read/write muxes), which is
-// unlikely to fit in a 1x1 Tiny Tapeout tile - see info.yaml.
+// NOTE: the address ports are 8 bits wide per the project interface,
+// but only the low 7 bits are decoded, giving 128 x 8 bits of storage
+// (1024 flip-flops plus 128:1 read/write muxes).
 module ram_256x8 (
     input  wire       clk,
     input  wire       we,
@@ -16,15 +16,15 @@ module ram_256x8 (
     output reg  [7:0] rdata
 );
 
-    localparam DEPTH = 256;
+    localparam DEPTH = 128;
 
     reg [7:0] mem [0:DEPTH-1];
 
     always @(posedge clk) begin
         if (we) begin
-            mem[waddr] <= wdata;
+            mem[waddr[6:0]] <= wdata;
         end
-        rdata <= mem[raddr];
+        rdata <= mem[raddr[6:0]];
     end
 
 endmodule
