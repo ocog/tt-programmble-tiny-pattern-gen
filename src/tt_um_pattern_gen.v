@@ -1,21 +1,5 @@
 `default_nettype none
 
-// Top-level Tiny Tapeout wrapper for the programmable waveform / PWM
-// generator.
-//
-//   ui_in[0] = UART RX
-//   ui_in[1] = MODE (0 = DAC playback, 1 = PWM)
-//
-//   MODE = 0: uo_out = RAM playback byte (for TLC7524 DAC),
-//             uio_out[0] = DAC write strobe (pulses with pattern_player
-//             advance), uio_oe[0] = 1.
-//   MODE = 1: uo_out = 8 independent PWM channels, duty cycles taken
-//             from RAM[0..7]. uio pins are all inputs (high-Z).
-//
-// NOTE: this wrapper uses the standard Tiny Tapeout split I/O ports
-// (uio_in / uio_out / uio_oe) rather than a top-level `inout` port,
-// matching the interface required by the TT test harness and PDK
-// I/O cells.
 module tt_um_pattern_gen (
     input  wire [7:0] ui_in,
     output wire [7:0] uo_out,
@@ -27,53 +11,123 @@ module tt_um_pattern_gen (
     input  wire       rst_n
 );
 
-    wire       uart_valid;
-    wire [7:0] uart_data;
+    // -------------------------------------------------------------------------
+    // Port mapping
+    // -------------------------------------------------------------------------
+    wire uart_rx = ui_in[0];
+    wire mode    = ui_in[1];
+    wire load    = ui_in[2];
 
-    uart_rx uart_rx_inst (
+    // -------------------------------------------------------------------------
+    // FSM
+    // state[2] = play_en
+    // state[1] = accept_uart
+    // state[0] = init_we
+    // -------------------------------------------------------------------------
+    localparam INIT = 3'b001;
+    localparam LOAD = 3'b010;
+    localparam PLAY = 3'b110;
+
+    reg [2:0] state, next;
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) state <= INIT;
+        else        state <= next;
+    end
+
+    always @(state or init_done or load) begin
+        next = 3'bx;
+        case (state)
+            INIT:    next = (init_done) ? LOAD : INIT;
+            LOAD:    next = (load)      ? PLAY : LOAD;
+            PLAY:    next = PLAY;
+            default: next = INIT;
+        endcase
+    end
+
+    assign {play_en, accept_uart, init_we} = state;
+
+    // -------------------------------------------------------------------------
+    // Init counter
+    // -------------------------------------------------------------------------
+    reg [5:0] init_addr;
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n)       init_addr <= 6'd0;
+        else if (init_we) init_addr <= init_addr + 1'b1;
+    end
+
+    wire init_done = (init_addr == 6'd63);
+
+    // -------------------------------------------------------------------------
+    // UART RX
+    // -------------------------------------------------------------------------
+    wire [7:0] uart_data;
+    wire       uart_valid;
+
+    uart_rx #(
+        .CLK_FREQ  (10_000_000),
+        .BAUD_RATE (9600)
+    ) uart_rx_inst (
         .clk   (clk),
         .rst_n (rst_n),
-        .rx    (ui_in[0]),
+        .rx    (uart_rx),
         .data  (uart_data),
         .valid (uart_valid)
     );
 
-    // Write-address pointer: advances by one for every received byte.
+    // -------------------------------------------------------------------------
+    // Write address counter
+    // -------------------------------------------------------------------------
     reg [7:0] write_addr;
+
     always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            write_addr <= 8'd0;
-        end else if (uart_valid) begin
-            write_addr <= write_addr + 1'b1;
-        end
+        if (!rst_n)                        write_addr <= 8'd0;
+        else if (accept_uart & uart_valid) write_addr <= write_addr + 1'b1;
     end
 
+    // -------------------------------------------------------------------------
+    // RAM write datapath mux
+    // -------------------------------------------------------------------------
+    wire       we    = init_we | (accept_uart & uart_valid);
+    wire [7:0] waddr = init_we ? {2'b00, init_addr} : write_addr;
+    wire [7:0] wdata = init_we ? 8'h00               : uart_data;
+
+    // -------------------------------------------------------------------------
+    // Pattern player
+    // -------------------------------------------------------------------------
     wire [7:0] play_addr;
     wire       advance;
 
-    pattern_player pattern_player_inst (
-        .clk     (clk),
-        .rst_n   (rst_n),
-        .raddr   (play_addr),
-        .advance (advance)
+    pattern_player #(
+        .CLK_FREQ     (10_000_000),
+        .PLAY_RATE_HZ (1000),
+        .RAM_DEPTH    (64)
+    ) pattern_player_inst (
+        .clk    (clk),
+        .rst_n  (rst_n),
+        .raddr  (play_addr),
+        .advance(advance)
     );
 
+    // -------------------------------------------------------------------------
+    // RAM
+    // -------------------------------------------------------------------------
     wire [7:0] ram_rdata;
 
     ram_256x8 ram_inst (
         .clk   (clk),
-        .we    (uart_valid),
-        .waddr (write_addr),
-        .wdata (uart_data),
+        .we    (we),
+        .waddr (waddr),
+        .wdata (wdata),
         .raddr (play_addr),
         .rdata (ram_rdata)
     );
 
-    // Capture duty-cycle bytes for PWM channels 0-7 from RAM[0..7] as
-    // the pattern player passes over those addresses. `play_addr`/
-    // `advance` lead `ram_rdata` by one cycle, so the address is
-    // registered alongside the advance pulse and matched up with the
-    // RAM data on the following cycle.
+    // -------------------------------------------------------------------------
+    // PWM duty cycle capture
+    // -------------------------------------------------------------------------
+    reg [7:0] duty [0:7];
     reg [7:0] cap_addr;
     reg       cap_valid;
 
@@ -82,62 +136,50 @@ module tt_um_pattern_gen (
             cap_addr  <= 8'd0;
             cap_valid <= 1'b0;
         end else begin
+            cap_addr  <= play_addr;
             cap_valid <= advance;
-            if (advance) begin
-                cap_addr <= play_addr;
-            end
         end
     end
 
-    reg [7:0] duty0, duty1, duty2, duty3, duty4, duty5, duty6, duty7;
-
+    integer i;
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            duty0 <= 8'd0;
-            duty1 <= 8'd0;
-            duty2 <= 8'd0;
-            duty3 <= 8'd0;
-            duty4 <= 8'd0;
-            duty5 <= 8'd0;
-            duty6 <= 8'd0;
-            duty7 <= 8'd0;
-        end else if (cap_valid) begin
-            case (cap_addr)
-                8'd0: duty0 <= ram_rdata;
-                8'd1: duty1 <= ram_rdata;
-                8'd2: duty2 <= ram_rdata;
-                8'd3: duty3 <= ram_rdata;
-                8'd4: duty4 <= ram_rdata;
-                8'd5: duty5 <= ram_rdata;
-                8'd6: duty6 <= ram_rdata;
-                8'd7: duty7 <= ram_rdata;
-                default: ;
-            endcase
+            for (i = 0; i < 8; i = i + 1)
+                duty[i] <= 8'd0;
+        end else if (cap_valid & (cap_addr[7:3] == 5'd0)) begin
+            duty[cap_addr[2:0]] <= ram_rdata;
         end
     end
 
+    // -------------------------------------------------------------------------
+    // PWM generator
+    // -------------------------------------------------------------------------
     wire [7:0] pwm_out;
 
     pwm_gen pwm_gen_inst (
-        .clk     (clk),
-        .rst_n   (rst_n),
-        .duty0   (duty0),
-        .duty1   (duty1),
-        .duty2   (duty2),
-        .duty3   (duty3),
-        .duty4   (duty4),
-        .duty5   (duty5),
-        .duty6   (duty6),
-        .duty7   (duty7),
-        .pwm_out (pwm_out)
+        .clk    (clk),
+        .rst_n  (rst_n),
+        .duty0  (duty[0]), .duty1 (duty[1]),
+        .duty2  (duty[2]), .duty3 (duty[3]),
+        .duty4  (duty[4]), .duty5 (duty[5]),
+        .duty6  (duty[6]), .duty7 (duty[7]),
+        .pwm_out(pwm_out)
     );
 
-    wire mode = ui_in[1];
+    // -------------------------------------------------------------------------
+    // Output mux — gated by play_en
+    // -------------------------------------------------------------------------
+    assign uo_out = play_en ? (mode ? pwm_out : ram_rdata) : 8'h00;
 
-    assign uo_out  = mode ? pwm_out : ram_rdata;
-    assign uio_out = mode ? 8'h00 : {7'b0, advance};
-    assign uio_oe  = mode ? 8'h00 : 8'b0000_0001;
+    // -------------------------------------------------------------------------
+    // Bidirectional IO
+    // -------------------------------------------------------------------------
+    assign uio_out = {7'b0, advance};
+    assign uio_oe  = {7'b0, play_en & ~mode};
 
-    // uio_in and ena are not used by this design.
+    // -------------------------------------------------------------------------
+    // Unused inputs
+    // -------------------------------------------------------------------------
+    wire _unused = &{ena, uio_in, ui_in[7:3]};
 
 endmodule
