@@ -30,21 +30,8 @@ module tt_um_pattern_gen (
 
     reg [2:0] state, next;
 
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) state <= INIT;
-        else        state <= next;
-    end
-
-    always @(state or init_done or load) begin
-        next = 3'bx;
-        case (state)
-            INIT:    next = (init_done) ? LOAD : INIT;
-            LOAD:    next = (load)      ? PLAY : LOAD;
-            PLAY:    next = PLAY;
-            default: next = INIT;
-        endcase
-    end
-
+    // Decode state bits into named signals before they are used anywhere.
+    wire play_en, accept_uart, init_we;
     assign {play_en, accept_uart, init_we} = state;
 
     // -------------------------------------------------------------------------
@@ -58,6 +45,20 @@ module tt_um_pattern_gen (
     end
 
     wire init_done = (init_addr == 6'd63);
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) state <= INIT;
+        else        state <= next;
+    end
+
+    always @(*) begin
+        case (state)
+            INIT:    next = init_done ? LOAD : INIT;
+            LOAD:    next = load      ? PLAY : LOAD;
+            PLAY:    next = PLAY;
+            default: next = INIT;
+        endcase
+    end
 
     // -------------------------------------------------------------------------
     // UART RX

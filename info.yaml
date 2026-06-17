@@ -22,7 +22,7 @@ pinout:
   # Inputs
   ui[0]: "UART_RX"
   ui[1]: "MODE"
-  ui[2]: ""
+  ui[2]: "LOAD"
   ui[3]: ""
   ui[4]: ""
   ui[5]: ""
